@@ -74,8 +74,8 @@ function normalizeExtracted(data) {
 /**
  * Extract receipt fields — tries Gemini once, then local fallback.
  */
-export async function extractExpenseFromImage(filePath) {
-  const { base64, mimeType } = await prepareImageForGemini(filePath);
+export async function extractExpenseFromImage(source) {
+  const { base64, mimeType } = await prepareImageForGemini(source);
 
   const prompt = `You analyze Indian receipt/bill photos. Extract structured expense data.
 

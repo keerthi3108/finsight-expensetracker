@@ -1,0 +1,8 @@
+{
+  "name": "finsight-expense-tracker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "serverless-http": "^3.2.0"
+  }
+}

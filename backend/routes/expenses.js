@@ -2,7 +2,8 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import Expense from "../models/Expense.js";
-import { uploadReceipt, uploadsDir } from "../middleware/upload.js";
+import { uploadReceipt, uploadsDir, isVercel } from "../middleware/upload.js";
+import { prepareImageForGemini } from "../utils/imagePrep.js";
 import { authRequired } from "../middleware/auth.js";
 import { extractExpenseFromImage, publicImagePath } from "../utils/gemini.js";
 import { createNotification } from "../utils/notify.js";
@@ -28,9 +29,18 @@ router.post("/upload", (req, res) => {
     }
 
     const filePath = req.file.path;
+    const imageSource = req.file.buffer || filePath;
+
     try {
-      const extracted = await extractExpenseFromImage(filePath);
-      const imageUrl = publicImagePath(req.file.filename);
+      const extracted = await extractExpenseFromImage(imageSource);
+
+      let imageUrl;
+      if (isVercel || req.file.buffer) {
+        const { base64, mimeType } = await prepareImageForGemini(req.file.buffer);
+        imageUrl = `data:${mimeType};base64,${base64}`;
+      } else {
+        imageUrl = publicImagePath(req.file.filename);
+      }
 
       const expense = await Expense.create({
         user: req.userId,
@@ -60,10 +70,12 @@ router.post("/upload", (req, res) => {
           : undefined,
       });
     } catch (e) {
-      try {
-        fs.unlinkSync(filePath);
-      } catch {
-        /* ignore */
+      if (filePath && !req.file.buffer) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          /* ignore */
+        }
       }
       console.error("Upload error:", e);
       return res.status(500).json({ error: e.message || "Failed to save receipt" });

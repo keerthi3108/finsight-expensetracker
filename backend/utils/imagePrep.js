@@ -1,31 +1,43 @@
 import sharp from "sharp";
 import fs from "fs";
 
-/**
- * Resize & compress receipt images before Gemini to reduce tokens and avoid quota issues.
- */
-export async function prepareImageForGemini(filePath) {
+async function compressBuffer(buffer) {
   try {
-    const buffer = await sharp(filePath)
+    const out = await sharp(buffer)
       .rotate()
       .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 82, mozjpeg: true })
       .toBuffer();
-
+    return { base64: out.toString("base64"), mimeType: "image/jpeg" };
+  } catch (err) {
+    console.warn("Sharp compress failed:", err.message);
     return {
       base64: buffer.toString("base64"),
       mimeType: "image/jpeg",
     };
-  } catch (err) {
-    console.warn("Sharp compress failed, using original file:", err.message);
-    const buffer = fs.readFileSync(filePath);
-    const ext = filePath.toLowerCase();
-    const mimeType = ext.endsWith(".png") ? "image/png" : "image/jpeg";
-    return { base64: buffer.toString("base64"), mimeType };
   }
 }
 
-/** Parse "Please retry in 5.18s" from Gemini error text. */
+/**
+ * Prepare image for Gemini from file path, buffer, or multer file object.
+ */
+export async function prepareImageForGemini(source) {
+  if (Buffer.isBuffer(source)) {
+    return compressBuffer(source);
+  }
+  if (source?.buffer) {
+    return compressBuffer(source.buffer);
+  }
+  if (typeof source === "string") {
+    const buffer = fs.readFileSync(source);
+    const ext = source.toLowerCase();
+    const mimeType = ext.endsWith(".png") ? "image/png" : "image/jpeg";
+    const { base64 } = await compressBuffer(buffer);
+    return { base64, mimeType };
+  }
+  throw new Error("Invalid image source");
+}
+
 export function parseRetryDelayMs(message) {
   const match = String(message).match(/retry in (\d+(?:\.\d+)?)\s*s/i);
   if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 500;
@@ -46,17 +58,9 @@ export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Models that typically work on Gemini free tier (tried in order). */
 export function getModelFallbackList() {
   const fromEnv = process.env.GEMINI_MODEL;
-  const defaults = [
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-  ];
-  if (fromEnv) {
-    return [fromEnv, ...defaults.filter((m) => m !== fromEnv)];
-  }
+  const defaults = ["gemini-2.0-flash-lite", "gemini-2.0-flash"];
+  if (fromEnv) return [fromEnv, ...defaults.filter((m) => m !== fromEnv)];
   return defaults;
 }

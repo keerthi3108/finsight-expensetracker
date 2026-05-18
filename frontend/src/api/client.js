@@ -1,6 +1,12 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+// Production on Vercel: same domain → empty baseURL. Local: localhost:5000
+const baseURL =
+  import.meta.env.VITE_API_URL !== undefined && import.meta.env.VITE_API_URL !== ""
+    ? import.meta.env.VITE_API_URL
+    : import.meta.env.PROD
+      ? ""
+      : "http://localhost:5000";
 
 export const api = axios.create({ baseURL, timeout: 60000 });
 
@@ -38,6 +44,6 @@ api.interceptors.response.use(
 
 export function imageUrl(path) {
   if (!path) return "";
-  if (path.startsWith("http")) return path;
+  if (path.startsWith("http") || path.startsWith("data:")) return path;
   return `${baseURL}${path}`;
 }

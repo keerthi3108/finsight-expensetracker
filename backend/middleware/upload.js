@@ -7,8 +7,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const uploadsDir = path.join(__dirname, "..", "uploads");
+const isVercel = Boolean(process.env.VERCEL);
 
-if (!fs.existsSync(uploadsDir)) {
+if (!isVercel && !fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
@@ -25,22 +26,22 @@ function fileFilter(req, file, cb) {
   }
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
-    const safeExt = [".jpg", ".jpeg", ".png"].includes(ext) ? ext : ".jpg";
-    const name = `${Date.now()}-${Math.random().toString(16).slice(2)}${safeExt}`;
-    cb(null, name);
-  },
-});
+// Vercel serverless: memory only (no persistent disk)
+const storage = isVercel
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, uploadsDir),
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+        const safeExt = [".jpg", ".jpeg", ".png"].includes(ext) ? ext : ".jpg";
+        cb(null, `${Date.now()}-${Math.random().toString(16).slice(2)}${safeExt}`);
+      },
+    });
 
-/** Multer instance: no file size cap, jpg/png/jpeg only. */
 export const uploadReceipt = multer({
   storage,
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter,
 });
 
-export { uploadsDir };
+export { uploadsDir, isVercel };
