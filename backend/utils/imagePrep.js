@@ -1,8 +1,8 @@
-import sharp from "sharp";
 import fs from "fs";
 
 async function compressBuffer(buffer) {
   try {
+    const sharp = (await import("sharp")).default;
     const out = await sharp(buffer)
       .rotate()
       .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })

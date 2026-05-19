@@ -10,7 +10,7 @@
     }
   },
   "rewrites": [
-    { "source": "/health", "destination": "/api" },
+    { "source": "/health", "destination": "/api/health" },
     { "source": "/auth/:path*", "destination": "/api" },
     { "source": "/expenses/:path*", "destination": "/api" },
     { "source": "/summary", "destination": "/api" },
