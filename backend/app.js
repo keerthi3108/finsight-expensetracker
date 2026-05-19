@@ -33,6 +33,7 @@ if (process.env.VERCEL_URL) {
 if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
   allowedOrigins.push(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
 }
+allowedOrigins.push("https://expenses-sigma-one.vercel.app");
 
 app.use(
   cors({
@@ -53,7 +54,12 @@ if (!process.env.VERCEL) {
   app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 }
 
-// Connect MongoDB before API routes (works for serverless + local)
+// Health check — no DB (fast for Vercel cold starts)
+app.get("/health", (req, res) => {
+  res.json({ ok: true, platform: process.env.VERCEL ? "vercel" : "local" });
+});
+
+// Connect MongoDB only for API routes that need it
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -68,9 +74,5 @@ app.use("/auth", authRoutes);
 app.use("/expenses", expenseRoutes);
 app.use("/summary", summaryRoutes);
 app.use("/notifications", notificationRoutes);
-
-app.get("/health", (req, res) => {
-  res.json({ ok: true, platform: process.env.VERCEL ? "vercel" : "local" });
-});
 
 export default app;
