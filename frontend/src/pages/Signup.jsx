@@ -23,7 +23,13 @@ export default function Signup() {
       await register(name, email, password);
       navigate("/");
     } catch (err) {
-      setError(err.response?.data?.error || "Signup failed");
+      if (!err.response) {
+        setError(
+          "Cannot reach the API. Start the backend: cd backend && npm run dev (port 5000)."
+        );
+      } else {
+        setError(err.response?.data?.error || "Signup failed");
+      }
     } finally {
       setLoading(false);
     }

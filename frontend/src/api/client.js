@@ -8,7 +8,7 @@ const baseURL =
       ? ""
       : "http://localhost:5000";
 
-export const api = axios.create({ baseURL, timeout: 60000 });
+export const api = axios.create({ baseURL, timeout: 120000 });
 
 const TOKEN_KEY = "finsight_token";
 

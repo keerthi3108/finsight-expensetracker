@@ -36,7 +36,10 @@ In Vercel → **Settings** → **Environment Variables**, add:
 |-----|--------|
 | `MONGODB_URI` | `mongodb+srv://USER:PASS@cluster0.xxx.mongodb.net/expense_tracker?retryWrites=true&w=majority` |
 | `GEMINI_API_KEY` | Your Gemini key |
-| `GEMINI_MODEL` | `gemini-2.0-flash-lite` |
+| `GEMINI_MODEL` | `gemini-2.0-flash` |
+| `GROQ_API_KEY` | Your Groq key (`gsk_...`) from [console.groq.com/keys](https://console.groq.com/keys) |
+| `GROQ_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` |
+| `RECEIPT_PRIMARY` | `groq` (use Groq first for bill scanning) |
 | `JWT_SECRET` | Long random string (32+ chars) |
 
 **Do not set** `VITE_API_URL` on Vercel — the frontend uses the same domain for API calls.
@@ -73,7 +76,7 @@ Open app: `https://YOUR-APP.vercel.app` → Sign up → Upload receipt
 | `Database connection failed` | Check `MONGODB_URI` starts with `mongodb+srv://` |
 | 404 on `/expenses` | Redeploy; check `vercel.json` rewrites exist |
 | CORS errors | Set `FRONTEND_URL` to your exact Vercel URL |
-| Upload timeout | Gemini quota — app saves fallback row to edit manually |
+| Upload timeout / bad scan | Add `GROQ_API_KEY` + `RECEIPT_PRIMARY=groq` — see `GROQ-SETUP.md` |
 
 ---
 

@@ -109,10 +109,21 @@ export default function Dashboard() {
       fd.append("receipt", file);
       const { data } = await api.post("/expenses/upload", fd);
       clearSelection();
-      if (data.usedFallback) {
+      if (data.parseSource === "placeholder") {
         showToast(
-          data.message || "AI busy — receipt saved. Edit amount & merchant in the list.",
+          data.message || "Could not read receipt — edit amount and merchant in the list.",
           "warning"
+        );
+      } else if (data.parseSource === "ocr") {
+        showToast(
+          data.message ||
+            `Scanned locally: ${data.merchant} — verify amount before saving more bills.`,
+          "warning"
+        );
+      } else if (data.parseSource === "groq") {
+        showToast(
+          `Groq AI: ${data.merchant} — ${data.category} (${data.confidence ?? 85}% confidence)`,
+          "success"
         );
       } else {
         showToast(

@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from "react";
+import { prepareReceiptFile } from "../utils/prepareReceiptImage.js";
 
 const ACCEPT = "image/png,image/jpeg,.jpg,.jpeg,.png";
+const MIN_WIDTH_WARN = 600;
 
 export default function UploadSection({ onUploaded, disabled }) {
   const inputRef = useRef(null);
@@ -10,16 +12,35 @@ export default function UploadSection({ onUploaded, disabled }) {
   const [error, setError] = useState("");
 
   const pickFile = useCallback(
-    (f) => {
+    async (f) => {
       setError("");
       if (!f) return;
       if (!["image/jpeg", "image/png"].includes(f.type)) {
         setError("Only JPG or PNG images are allowed.");
         return;
       }
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setFile(f);
-      setPreviewUrl(URL.createObjectURL(f));
+      try {
+        const prepared = await prepareReceiptFile(f);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setFile(prepared);
+        setPreviewUrl(URL.createObjectURL(prepared));
+
+        const dimUrl = URL.createObjectURL(prepared);
+        const dims = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => resolve({ w: 0, h: 0 });
+          img.src = dimUrl;
+        });
+        URL.revokeObjectURL(dimUrl);
+        if (dims.w > 0 && dims.w < MIN_WIDTH_WARN) {
+          setError(
+            "Image is very small — use a clearer photo of the full bill (not a tiny screenshot)."
+          );
+        }
+      } catch {
+        setError("Could not process this image. Try another JPG/PNG.");
+      }
     },
     [previewUrl]
   );
@@ -36,7 +57,7 @@ export default function UploadSection({ onUploaded, disabled }) {
       <div className="section-head compact">
         <div>
           <h2>Upload Bill</h2>
-          <p>AI extracts amount, merchant, category & date in ₹</p>
+          <p>Groq / Gemini reads amount, merchant, category & date in ₹</p>
         </div>
       </div>
 
@@ -74,7 +95,9 @@ export default function UploadSection({ onUploaded, disabled }) {
           </svg>
         </div>
         <p className="upload-title">Drag & drop receipt here</p>
-        <p className="upload-hint">or click to browse · JPG/PNG</p>
+        <p className="upload-hint">
+          JPG/PNG · full bill in good light · avoid blurry screenshots
+        </p>
       </div>
 
       <input
@@ -98,7 +121,7 @@ export default function UploadSection({ onUploaded, disabled }) {
               <div className="scan-line" />
               <div className="scan-text">
                 <span className="spinner lg" />
-                AI analyzing receipt…
+                Scanning receipt… (may take up to 1 min)
               </div>
             </div>
           )}
@@ -114,7 +137,7 @@ export default function UploadSection({ onUploaded, disabled }) {
         >
           {disabled ? (
             <>
-              <span className="spinner" /> Processing with Gemini…
+              <span className="spinner" /> Scanning receipt…
             </>
           ) : (
             "Analyze & Save Expense"

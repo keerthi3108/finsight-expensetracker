@@ -1,19 +1,17 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import path from "path";
 import { parseJsonFromGemini } from "./parseJsonFromGemini.js";
-import { CATEGORIES } from "../models/Expense.js";
-import { prepareImageForGemini, isRateLimitError } from "./imagePrep.js";
+import { prepareImageForGemini, isRateLimitError, getModelFallbackList } from "./imagePrep.js";
+import { normalizeGeminiPayload } from "./receiptParse.js";
+import { extractExpenseFromOcr } from "./localOcr.js";
+import { extractExpenseFromGroq, hasGroqKey } from "./groqVision.js";
 
-const GEMINI_TIMEOUT_MS = 25000;
+const GEMINI_TIMEOUT_MS = 45000;
 
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set in environment");
   return new GoogleGenerativeAI(apiKey);
-}
-
-function getPrimaryModel() {
-  return process.env.GEMINI_MODEL || "gemini-2.0-flash-lite";
 }
 
 function withTimeout(promise, ms) {
@@ -25,89 +23,116 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-/** Save receipt even when Gemini is down — user can edit details. */
+const RECEIPT_PROMPT = `You are an expert OCR system for Indian retail receipts, restaurant bills, pharmacy bills, and GST invoices.
+
+Read the attached image carefully. Extract:
+1. amount — FINAL amount the customer paid in INR (number only). Look for: GRAND TOTAL, NET AMOUNT, TOTAL, AMOUNT PAID, BALANCE, Bill Amount. Ignore subtotals, tax-only lines, and item prices unless no total exists.
+2. merchant — shop/restaurant/pharmacy name (usually top of bill).
+3. category — exactly one of: Food, Travel, Shopping, Medical, Bills, Recharge, Entertainment, Other.
+4. date — transaction date as YYYY-MM-DD from the bill (not today's date unless printed on bill).
+5. confidence — 0-100 how sure you are.
+
+If text is blurry, infer the best guess from visible digits. Never return amount 0 unless the bill truly shows zero.
+
+Respond with ONLY valid JSON:
+{"amount":number,"merchant":string,"category":string,"date":"YYYY-MM-DD","confidence":number}`;
+
+/** Placeholder when both Gemini and OCR fail. */
 export function localReceiptFallback() {
   return {
     amount: 0,
     merchant: "Unknown (please edit)",
-    category: "Food",
+    category: "Other",
     date: new Date(),
-    confidence: 35,
+    confidence: 25,
     usedFallback: true,
+    source: "placeholder",
   };
 }
 
-/**
- * One model, no long retry chain — fails fast on quota errors.
- */
-async function generateOnce(parts) {
-  const modelName = getPrimaryModel();
-  const model = getClient().getGenerativeModel({ model: modelName });
+async function generateOnce(parts, modelName) {
+  const model = getClient().getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.1,
+    },
+  });
   const result = await model.generateContent(parts);
   return result.response.text();
 }
 
-function normalizeExtracted(data) {
-  const amount = Number(data.amount);
-  if (!Number.isFinite(amount) || amount < 0) {
-    throw new Error("Invalid amount from AI");
+async function callGeminiModels(base64, mimeType) {
+  const parts = [
+    { text: RECEIPT_PROMPT },
+    { inlineData: { mimeType, data: base64 } },
+  ];
+  const models = getModelFallbackList();
+  let lastErr;
+
+  for (const modelName of models) {
+    try {
+      const text = await withTimeout(generateOnce(parts, modelName), GEMINI_TIMEOUT_MS);
+      return normalizeGeminiPayload(parseJsonFromGemini(text));
+    } catch (err) {
+      lastErr = err;
+      const msg = err?.message || String(err);
+      console.warn(`Gemini [${modelName}]:`, msg.slice(0, 160));
+    }
   }
+  throw lastErr || new Error("All Gemini models failed");
+}
 
-  let category = typeof data.category === "string" ? data.category.trim() : "Other";
-  if (!CATEGORIES.includes(category)) category = "Other";
+async function tryGeminiExtract(base64, mimeType) {
+  const result = await callGeminiModels(base64, mimeType);
+  return { ...result, source: "gemini" };
+}
 
-  const merchant =
-    typeof data.merchant === "string" && data.merchant.trim()
-      ? data.merchant.trim()
-      : "Unknown";
+async function tryGroqExtract(base64, mimeType) {
+  if (!hasGroqKey()) throw new Error("GROQ_API_KEY is not set");
+  const groqResult = await withTimeout(
+    extractExpenseFromGroq(base64, mimeType),
+    GEMINI_TIMEOUT_MS
+  );
+  console.log("Receipt parsed via Groq vision");
+  return groqResult;
+}
 
-  let date = new Date(data.date);
-  if (Number.isNaN(date.getTime())) date = new Date();
-
-  let confidence = Number(data.confidence);
-  if (!Number.isFinite(confidence)) confidence = 80;
-  confidence = Math.min(100, Math.max(0, Math.round(confidence)));
-
-  return { amount, merchant, category, date, confidence, usedFallback: false };
+async function tryOcrExtract(source) {
+  const ocrResult = await extractExpenseFromOcr(source);
+  console.log("Receipt parsed via local OCR");
+  return ocrResult;
 }
 
 /**
- * Extract receipt fields — tries Gemini once, then local fallback.
+ * Extract receipt fields — order from RECEIPT_PRIMARY (groq | gemini), then fallbacks.
  */
 export async function extractExpenseFromImage(source) {
   const { base64, mimeType } = await prepareImageForGemini(source);
+  const primary = (process.env.RECEIPT_PRIMARY || "gemini").trim().toLowerCase();
 
-  const prompt = `You analyze Indian receipt/bill photos. Extract structured expense data.
+  const steps =
+    primary === "groq"
+      ? [
+          { name: "Groq", run: () => tryGroqExtract(base64, mimeType) },
+          { name: "Gemini", run: () => tryGeminiExtract(base64, mimeType) },
+          { name: "OCR", run: () => tryOcrExtract(source) },
+        ]
+      : [
+          { name: "Gemini", run: () => tryGeminiExtract(base64, mimeType) },
+          { name: "Groq", run: () => tryGroqExtract(base64, mimeType) },
+          { name: "OCR", run: () => tryOcrExtract(source) },
+        ];
 
-Categories (pick exactly one): ${CATEGORIES.join(", ")}.
-
-Rules:
-- amount: total bill amount as a number in Indian Rupees (INR). No currency symbols. Use the final payable total.
-- merchant: store/brand/restaurant name; if unclear use "Unknown".
-- category: must match one allowed label exactly.
-- date: YYYY-MM-DD from the receipt; if missing use today.
-- confidence: integer 0-100.
-
-Respond with ONLY JSON:
-{"amount":number,"merchant":string,"category":string,"date":string,"confidence":number}`;
-
-  try {
-    const text = await withTimeout(
-      generateOnce([
-        { text: prompt },
-        { inlineData: { mimeType, data: base64 } },
-      ]),
-      GEMINI_TIMEOUT_MS
-    );
-    return normalizeExtracted(parseJsonFromGemini(text));
-  } catch (err) {
-    const msg = err?.message || String(err);
-    console.warn("Gemini extract failed:", msg.slice(0, 180));
-    if (isRateLimitError(err)) {
-      console.warn("Using local fallback due to API quota/rate limit");
+  for (const step of steps) {
+    try {
+      return await step.run();
+    } catch (err) {
+      console.warn(`${step.name} extract failed:`, err?.message?.slice(0, 120));
     }
-    return localReceiptFallback();
   }
+
+  return localReceiptFallback();
 }
 
 /**
@@ -145,32 +170,42 @@ This month: ₹${currentMonthSpend.toFixed(0)} | Last month: ₹${previousMonthS
 Return ONLY JSON:
 {"totalSpending":number,"spendingHabits":string,"spendingPattern":string,"monthlyComparison":string,"categoryInsights":{},"savingTips":[],"overspendingAlerts":[],"reminders":[]}`;
 
-  const text = await withTimeout(generateOnce([{ text: prompt }]), GEMINI_TIMEOUT_MS);
-  const data = parseJsonFromGemini(text);
+  const models = getModelFallbackList();
+  for (const modelName of models) {
+    try {
+      const text = await withTimeout(
+        generateOnce([{ text: prompt }], modelName),
+        GEMINI_TIMEOUT_MS
+      );
+      const data = parseJsonFromGemini(text);
+      const totalSpending =
+        typeof data.totalSpending === "number" && Number.isFinite(data.totalSpending)
+          ? data.totalSpending
+          : expenses.reduce((s, e) => s + e.amount, 0);
 
-  const totalSpending =
-    typeof data.totalSpending === "number" && Number.isFinite(data.totalSpending)
-      ? data.totalSpending
-      : expenses.reduce((s, e) => s + e.amount, 0);
-
-  return {
-    totalSpending,
-    thisMonthSpend: currentMonthSpend,
-    lastMonthSpend: previousMonthSpend,
-    spendingHabits: String(data.spendingHabits || data.spendingPattern || ""),
-    spendingPattern: String(data.spendingPattern || data.spendingHabits || ""),
-    monthlyComparison: String(data.monthlyComparison || ""),
-    categoryInsights:
-      data.categoryInsights && typeof data.categoryInsights === "object"
-        ? data.categoryInsights
-        : {},
-    savingTips: Array.isArray(data.savingTips) ? data.savingTips.map(String) : [],
-    overspendingAlerts: Array.isArray(data.overspendingAlerts)
-      ? data.overspendingAlerts.map(String)
-      : [],
-    reminders: Array.isArray(data.reminders) ? data.reminders.map(String) : [],
-    aiGenerated: true,
-  };
+      return {
+        totalSpending,
+        thisMonthSpend: currentMonthSpend,
+        lastMonthSpend: previousMonthSpend,
+        spendingHabits: String(data.spendingHabits || data.spendingPattern || ""),
+        spendingPattern: String(data.spendingPattern || data.spendingHabits || ""),
+        monthlyComparison: String(data.monthlyComparison || ""),
+        categoryInsights:
+          data.categoryInsights && typeof data.categoryInsights === "object"
+            ? data.categoryInsights
+            : {},
+        savingTips: Array.isArray(data.savingTips) ? data.savingTips.map(String) : [],
+        overspendingAlerts: Array.isArray(data.overspendingAlerts)
+          ? data.overspendingAlerts.map(String)
+          : [],
+        reminders: Array.isArray(data.reminders) ? data.reminders.map(String) : [],
+        aiGenerated: true,
+      };
+    } catch (e) {
+      console.warn(`Summary model ${modelName} failed:`, e.message?.slice(0, 100));
+    }
+  }
+  throw new Error("Summary generation failed");
 }
 
 export function publicImagePath(filename) {

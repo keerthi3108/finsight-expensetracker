@@ -52,22 +52,34 @@ router.post("/upload", (req, res) => {
         confidence: extracted.confidence,
       });
 
-      const notifMsg = extracted.usedFallback
-        ? "AI quota busy — receipt saved. Please edit amount & merchant."
-        : `${extracted.merchant} — ${formatINR(extracted.amount)} (${extracted.category})`;
+      const isPlaceholder = extracted.source === "placeholder";
+      const isOcr = extracted.source === "ocr";
+      const isGroq = extracted.source === "groq";
+      const notifMsg = isPlaceholder
+        ? "Could not read bill — please edit amount and merchant."
+        : isOcr
+          ? `${extracted.merchant} — ${formatINR(extracted.amount)} (scanned locally)`
+          : isGroq
+            ? `${extracted.merchant} — ${formatINR(extracted.amount)} (Groq AI)`
+            : `${extracted.merchant} — ${formatINR(extracted.amount)} (${extracted.category})`;
 
       await createNotification(req.userId, {
-        title: extracted.usedFallback ? "Receipt saved (manual edit needed)" : "Receipt processed",
+        title: isPlaceholder ? "Receipt saved (manual edit needed)" : "Receipt processed",
         message: notifMsg,
-        type: extracted.usedFallback ? "warning" : "expense",
+        type: isPlaceholder ? "warning" : "expense",
       });
 
       return res.status(201).json({
         ...expense.toObject(),
         usedFallback: Boolean(extracted.usedFallback),
-        message: extracted.usedFallback
-          ? "AI quota reached. Bill saved — click Edit to enter the correct amount."
-          : undefined,
+        parseSource: extracted.source,
+        message: isPlaceholder
+          ? "Could not read this receipt. Use Edit to enter the correct amount."
+          : isOcr
+            ? "Read via local OCR (AI busy). Verify amount and merchant."
+            : isGroq
+              ? "Read via Groq AI. Verify amount and merchant."
+              : undefined,
       });
     } catch (e) {
       if (filePath && !req.file.buffer) {
