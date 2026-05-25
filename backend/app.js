@@ -66,7 +66,13 @@ app.use(async (req, res, next) => {
     next();
   } catch (err) {
     console.error("DB connect error:", err.message);
-    res.status(500).json({ error: "Database connection failed" });
+    const msg =
+      err.message?.includes("Missing MONGODB_URI")
+        ? "Server database not configured (MONGODB_URI missing)"
+        : err.message?.includes("timed out") || err.message?.includes("Server selection timed out")
+          ? "Database is slow to respond — please try again in a few seconds"
+          : "Database connection failed";
+    res.status(503).json({ error: msg });
   }
 });
 

@@ -18,10 +18,16 @@ export default function Login() {
       await login(email, password);
       navigate("/");
     } catch (err) {
-      if (!err.response) {
+      if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+        setError("Server took too long — wait 10 seconds and try again.");
+      } else if (!err.response) {
         setError(
-          "Cannot reach the API. Start the backend: cd backend && npm run dev (port 5000)."
+          import.meta.env.PROD
+            ? "Cannot reach the server. Check your connection and try again."
+            : "Cannot reach the API. Start the backend: cd backend && npm run dev (port 5000)."
         );
+      } else if (err.response?.status === 504) {
+        setError("Server timeout — try again in a few seconds.");
       } else {
         setError(err.response?.data?.error || "Login failed");
       }

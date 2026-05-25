@@ -23,10 +23,18 @@ export default function Signup() {
       await register(name, email, password);
       navigate("/");
     } catch (err) {
-      if (!err.response) {
+      if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
         setError(
-          "Cannot reach the API. Start the backend: cd backend && npm run dev (port 5000)."
+          "Server took too long — database may be waking up. Wait 10 seconds and try again."
         );
+      } else if (!err.response) {
+        setError(
+          import.meta.env.PROD
+            ? "Cannot reach the server. Check your connection and try again."
+            : "Cannot reach the API. Start the backend: cd backend && npm run dev (port 5000)."
+        );
+      } else if (err.response?.status === 504) {
+        setError("Server timeout — try again in a few seconds.");
       } else {
         setError(err.response?.data?.error || "Signup failed");
       }

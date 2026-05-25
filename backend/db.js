@@ -24,10 +24,22 @@ export async function connectDB() {
 
   if (!cached.promise) {
     const uri = getMongoUri();
-    cached.promise = mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 20000,
-      bufferCommands: false,
-    });
+    cached.promise = mongoose
+      .connect(uri, {
+        serverSelectionTimeoutMS: 7000,
+        connectTimeoutMS: 7000,
+        socketTimeoutMS: 20000,
+        bufferCommands: false,
+        maxPoolSize: 5,
+      })
+      .then((conn) => {
+        console.log("MongoDB connected");
+        return conn;
+      })
+      .catch((err) => {
+        cached.promise = null;
+        throw err;
+      });
   }
 
   cached.conn = await cached.promise;

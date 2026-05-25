@@ -34,11 +34,11 @@ router.post("/register", async (req, res) => {
       password,
     });
 
-    await createNotification(user._id, {
+    createNotification(user._id, {
       title: "Welcome to FinSight AI",
       message: "Your account is ready. Upload your first receipt to start tracking expenses in ₹.",
       type: "success",
-    });
+    }).catch(() => {});
 
     const token = signToken(user._id);
     res.status(201).json({ token, user: user.toSafeJSON() });

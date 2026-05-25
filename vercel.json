@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.com/vercel.json",
-  "buildCommand": "cd frontend && npm install && npm run build && cd ../backend && npm install",
+  "buildCommand": "cd frontend && npm run build",
   "outputDirectory": "frontend/dist",
-  "installCommand": "npm install --prefix frontend && npm install --prefix backend",
+  "installCommand": "npm install && npm install --prefix frontend && npm install --prefix backend",
   "functions": {
     "api/index.js": {
       "memory": 1024,
@@ -11,6 +11,7 @@
   },
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
+    { "source": "/ping-db", "destination": "/api/ping-db" },
     { "source": "/auth/:path*", "destination": "/api" },
     { "source": "/expenses/:path*", "destination": "/api" },
     { "source": "/summary", "destination": "/api" },
